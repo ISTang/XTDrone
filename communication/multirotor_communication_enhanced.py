@@ -1,3 +1,26 @@
+""" 主要改进点总结：
+1.位置保持功能：
+  .增加了单轴位置保持能力
+  .可以分别控制X、Y、Z轴和偏航角的位置保持
+  .通过PID控制参数实现平滑的位置保持
+2.控制精度提升：
+  .增加了位置保持的比例控制参数
+  .可以分别调节各个轴的控制响应
+3.更灵活的控制模式：
+  .支持混合控制模式（某些轴位置保持，某些轴速度控制）
+  .支持FLU和ENU两种坐标系下的位置保持
+4.状态管理优化：
+  .更清晰的状态转换逻辑
+  .更好的代码组织结构
+  .更完善的控制模式切换机制
+5. 安全性提升：
+  .更平滑的模式切换
+  .更可靠的位置保持能力
+  .防止突然的位置偏移
+
+这些改进使得飞行器能够更稳定地执行任务，特别是在需要精确位置控制的场景下表现更好。
+同时，代码的可维护性和可扩展性也得到了提升。
+ """
 import rospy
 from mavros_msgs.msg import PositionTarget
 from mavros_msgs.srv import CommandBool, SetMode
@@ -26,6 +49,8 @@ class Communication:
         self.flight_mode = None
         self.mission = None
         self.last_cmd = None
+
+        # 新增位置保持相关的属性
         self.hold_position_x = 0
         self.hold_position_y = 0
         self.hold_position_z = 0
@@ -35,7 +60,7 @@ class Communication:
         self.hold_y_flag = 0
         self.hold_z_flag = 0
         self.hold_yaw_flag = 0
-        self.hold_kp_x = 1
+        self.hold_kp_x = 1 # 位置保持的比例控制参数
         self.hold_kp_y = 1
         self.hold_kp_z = 1
         self.hold_kp_yaw = 1
@@ -145,10 +170,14 @@ class Communication:
         yaw = self.q2yaw(msg.orientation)
         self.target_motion = self.construct_target(x=msg.position.x, y=msg.position.y, z=msg.position.z, yaw=yaw)
 
+    # 改进的速度控制回调函数：
     def cmd_vel_flu_callback(self, msg):
+        # 先检查是否需要进入悬停模式
         self.hover_state_transition(msg.linear.x, msg.linear.y, msg.linear.z, msg.angular.z)
+        # 如果不悬停，检查是否需要位置保持
         if self.hover_flag == 0:
             self.hold_state_transition(msg.linear.x, msg.linear.y, msg.linear.z, msg.angular.z, 'flu')
+        # 如果既不悬停也不位置保持，则执行速度控制
         if self.hover_flag == 0 and self.hold_flag == 0:
             self.coordinate_frame = 8
             self.motion_type = 1
@@ -190,7 +219,17 @@ class Communication:
             self.flight_mode = 'HOVER'
             self.hover()
 
+    # 新增位置保持状态转换功能：
     def hold_state_transition(self, x, y, z, w, vel_type):
+        """位置保持状态转换函数
+    
+        当速度命令小于阈值时，自动进入对应轴的位置保持模式
+        
+        Args:
+            x,y,z: 线速度命令
+            w: 角速度命令
+            vel_type: 速度指令类型('flu'或'enu')
+        """
         if vel_type == 'flu':
             if abs(x) < 0.02 and abs(y) < 0.02:
                 if self.hold_x_flag == 0 or self.hold_y_flag == 0:
